@@ -1,0 +1,20 @@
+diff --git a/sglang/srt/mem_cache/swa_memory_pool.py b/sglang/srt/mem_cache/swa_memory_pool.py
+--- a/sglang/srt/mem_cache/swa_memory_pool.py
++++ b/sglang/srt/mem_cache/swa_memory_pool.py
+@@ -170,7 +170,16 @@ class SWAKVPool(BaseSWAKVPool):
+             if self.swa_loc is not None:
+                 loc = self.swa_loc
+             else:
+-                if self.full_to_swa_index_mapping is not None:
++                # All-SWA models do not need full->SWA translation. Avoid
++                # touching full_to_swa_index_mapping in this path: it is
++                # registered as a weakref.proxy and Dynamo cannot wrap that
++                # object during torch.compile CUDA graph capture.
++                if (
++                    self.full_layer_nums != 0
++                    and self._size_full != 0
++                    and self.full_to_swa_index_mapping is not None
++                ):
+                     loc = self.translate_loc_from_full_to_swa(loc)
+ 
+             self.swa_kv_pool.set_kv_buffer(
