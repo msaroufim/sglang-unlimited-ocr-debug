@@ -102,6 +102,11 @@ Additional sampler sync patch:
 }
 ```
 
+With a fixed server seed (`--random-seed 1234`), the original custom-processor
+path and the sampler-sync patch produced byte-identical output for the synthetic
+page: 1659 chars, SHA-256
+`75633291e5fe2eaf07c95bd9f85566dc181230e24552107de26d751a18d8c49a`.
+
 Perfetto operator deltas for one steady profiled request:
 
 | Event | Before | After |
