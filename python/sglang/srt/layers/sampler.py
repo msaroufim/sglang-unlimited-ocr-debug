@@ -780,17 +780,35 @@ def apply_custom_logit_processor(
         f"({num_tokens_in_batch})"
     )
 
-    for _, (
+    custom_logit_processor_indices = (
+        sampling_batch_info.custom_logit_processor_indices or {}
+    )
+    for processor_key, (
         processor,
         batch_mask,
     ) in sampling_batch_info.custom_logit_processor.items():
-        # Get the batch indices that need to be processed
-        batch_indices = batch_mask.nonzero(as_tuple=True)[0]
-
         assert batch_mask.shape[0] == len(sampling_batch_info), (
             f"The number of batch mask ({batch_mask.shape[0]}) does not match the number of "
             f"sampling_batch_info ({len(sampling_batch_info)})"
         )
+
+        # Prefer CPU-side scheduler metadata. Falling back to nonzero preserves
+        # compatibility with SamplingBatchInfo objects built by older code.
+        batch_indices = custom_logit_processor_indices.get(processor_key)
+        if batch_indices is None:
+            batch_indices = batch_mask.nonzero(as_tuple=True)[0].tolist()
+
+        if (
+            len(sampling_batch_info) == 1
+            and num_tokens_in_batch == 1
+            and batch_indices == [0]
+        ):
+            processor(logits, [sampling_batch_info.custom_params[0]])
+            logger.debug(
+                f"Custom logit processor {processor.__class__.__name__} is applied."
+            )
+            continue
+
         batch_mask = torch.repeat_interleave(batch_mask, num_tokens_in_batch)
 
         # Apply the processor to the logits

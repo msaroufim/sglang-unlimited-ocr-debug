@@ -80,14 +80,53 @@ python -m sglang.launch_server \
 That path improved steady-state end-to-end time on the synthetic page from about
 `1.98s` to `1.83s`, with later runs near `1.76s`.
 
+Additional sampler sync patch:
+
+- The Unlimited-OCR request uses a custom no-repeat n-gram logit processor on
+  every decode token.
+- The generic custom-processor path recovered request indices with
+  `batch_mask.nonzero(as_tuple=True)[0]`, then used boolean indexing. On the
+  synthetic bs=1 OCR run this produced 449 `aten::nonzero_numpy` calls and
+  about 473 ms of `cudaStreamSynchronize` in the Perfetto trace.
+- The patch carries CPU-side custom-processor indices in `SamplingBatchInfo` and
+  adds a bs=1 fast path that calls the in-place processor directly.
+- With `--enable-torch-compile --cuda-graph-bs 1 --cuda-graph-max-bs 1`, steady
+  e2e improved to `1.57s` average over runs 1-3:
+
+```json
+{
+  "steady_e2e_avg_s": 1.5745927600000869,
+  "steady_ttft_avg_s": 0.7232199669997499,
+  "chunks": 448,
+  "chars": 1659
+}
+```
+
+Perfetto operator deltas for one steady profiled request:
+
+| Event | Before | After |
+| --- | ---: | ---: |
+| `aten::nonzero` | 1352 calls / 585.6 ms | 5 calls / 0.7 ms |
+| `aten::nonzero_numpy` | 449 calls / 533.7 ms | 0 calls / 0.0 ms |
+| `aten::repeat_interleave` | 449 calls / 36.7 ms | 0 calls / 0.0 ms |
+| `cudaStreamSynchronize` | 2256 calls / 473.5 ms | 460 calls / 2.9 ms |
+| `cudaGraphLaunch` | 448 calls / 132.2 ms | 448 calls / 115.0 ms |
+
+Local trace artifacts:
+
+- `fa4-steady-1782364683.4941914-TP-0.trace.json.gz`
+- `fa4-compile-sampler-patch2-steady-1782366210.3966837-TP-0.trace.json.gz`
+- `fa4_compile_sampler_patch2_bs1_bench.json`
+
 ## Next Debug Items
 
 - Test mainline SGLang against `baidu/Unlimited-OCR` once Unlimited-OCR model
   registration is available outside the Baidu wheel.
 - Expand compile capture from `--cuda-graph-bs 1` to the production batch-size
   set and isolate any next Dynamo blockers.
-- Remove CPU syncs visible in the trace: `aten::nonzero`, `aten::nonzero_numpy`,
-  `cudaStreamSynchronize`, `aten::item`, and `index_put_`.
+- The remaining per-token sampler work is mostly greedy `argmax` and
+  `index_put_` inside the no-repeat processor. The large `nonzero_numpy`
+  synchronization issue is gone for the bs=1 OCR path.
 - Make multimodal prefill more static, or separately compile the vision encoder
   and projector path.
 - Add B200/B300-specific MoE kernel configs; the server logs reported missing
